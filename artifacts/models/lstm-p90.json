@@ -1,0 +1,12 @@
+{
+  "name": "lstm-p90",
+  "trained_quantile": 0.9,
+  "window": 60,
+  "horizon": 10,
+  "hidden": 64,
+  "layers": 2,
+  "dropout": 0.2,
+  "epochs_run": 30,
+  "seed": 42,
+  "pas_version": "0.1.0"
+}

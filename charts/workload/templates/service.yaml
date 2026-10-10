@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.app.name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+    {{- include "workload.appSelector" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "workload.appSelector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ .Values.app.name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "workload.appSelector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

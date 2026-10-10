@@ -1,0 +1,17 @@
+# Experiment matrix (plan §10). `pas experiment plan` expands it into experiments/plan.csv in a
+# randomised order; `pas experiment run` executes whatever has no result yet.
+
+# Scaler presets from pas.yaml, each run `repetitions` times per window.
+scalers: [hpa-default, hpa-tuned, naive, arima, lstm, oracle]
+
+# Presets that need only one run per window (reference points).
+once: [static]
+
+windows: [W1, W2, W3, W4]
+repetitions: 3
+
+# One value, or a list for the startup-delay sensitivity study, e.g. [0, 30, 60, 120].
+startup_delay_seconds: 60
+
+# Shuffle seed: the order is random but reproducible.
+seed: 2026

@@ -1,0 +1,55 @@
+# Values for one lane. `pas lane deploy` generates these from pas.yaml; you rarely edit them.
+
+app:
+  name: demo-api
+  image:
+    repository: ""          # REQUIRED, e.g. <acr>.azurecr.io/pas/demo-api
+    tag: ""                 # REQUIRED
+    pullPolicy: IfNotPresent
+  startupDelaySeconds: 60   # simulated warm-up before the pod reports ready
+  workUnits: 20             # CPU work per request
+  drainDelaySeconds: 5
+  terminationGracePeriodSeconds: 30
+  # Guaranteed QoS (requests == limits) keeps per-pod capacity stable.
+  resources:
+    requests: {cpu: 250m, memory: 64Mi}
+    limits: {cpu: 250m, memory: 64Mi}
+  # Schedule onto nodes labelled pas.dev/pool=<nodePool> and tolerate the matching taint.
+  # Leave empty to schedule anywhere (e.g. a test cluster without dedicated pools).
+  nodePool: app
+
+scaler:
+  mode: hpa                 # off | static | hpa | predictive
+  minReplicas: 2
+  maxReplicas: 20
+  staticReplicas: 20        # used by mode=static (HPA with min = max)
+  cpuTargetPercent: 70      # hpa mode, and the reactive trigger in hybrid predictive mode
+  behavior: {}              # HPA scaling behaviour (autoscaling/v2), also applied by KEDA
+  # predictive mode only:
+  hybrid: true              # keep the CPU trigger: replicas = max(reactive, predictive)
+  thresholdRps: 16          # per_pod_rps × (1 − headroom)
+  pollingIntervalSeconds: 15
+
+forecaster:
+  image:
+    repository: ""          # REQUIRED in predictive mode, e.g. <acr>.azurecr.io/pas/forecaster
+    tag: ""
+    pullPolicy: IfNotPresent
+  model: naive              # naive | last | arima | lstm | lstm-p90 | oracle
+  quantile: ""              # e.g. "0.9" for naive/arima; LSTM quantile models ignore this
+  horizon: 10
+  lead: "2,4"
+  intervalSeconds: 30
+  historyMinutes: 4320
+  prometheusUrl: http://kube-prometheus-stack-prometheus.monitoring.svc:9090
+  # Contents of a window JSON. Set with: --set-file forecaster.window=loadgen/windows/W1.json
+  window: ""
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits: {memory: 1Gi}
+  nodeSelector:
+    kubernetes.azure.com/mode: system
+
+serviceMonitor:
+  enabled: true
+  interval: 15s

@@ -1,0 +1,45 @@
+{{- if eq .Values.scaler.mode "predictive" }}
+{{- if not .Values.forecaster.image.repository }}
+{{- fail "forecaster.image.repository is required when scaler.mode=predictive" }}
+{{- end }}
+{{- if and (eq .Values.forecaster.model "oracle") (not .Values.forecaster.window) }}
+{{- fail "the oracle model needs forecaster.window (--set-file forecaster.window=...)" }}
+{{- end }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ .Values.app.name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+  annotations:
+    pas.dev/scaler-mode: predictive
+    pas.dev/model: {{ .Values.forecaster.model }}
+spec:
+  scaleTargetRef:
+    name: {{ .Values.app.name }}
+  minReplicaCount: {{ .Values.scaler.minReplicas }}
+  maxReplicaCount: {{ .Values.scaler.maxReplicas }}
+  pollingInterval: {{ .Values.scaler.pollingIntervalSeconds }}
+  {{- with .Values.scaler.behavior }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        {{- toYaml . | nindent 8 }}
+  {{- end }}
+  triggers:
+    {{- if .Values.scaler.hybrid }}
+    # Reactive safety net: the HPA uses the larger of the two desired replica counts.
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: {{ .Values.scaler.cpuTargetPercent | quote }}
+    {{- end }}
+    # Proactive signal: desired = ceil(predicted_rps / thresholdRps).
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.forecaster.prometheusUrl }}
+        query: max(pas_predicted_rps{lane="{{ .Release.Namespace }}"})
+        threshold: {{ .Values.scaler.thresholdRps | quote }}
+        # Empty result (forecaster stale or down) counts as 0, so the CPU trigger takes over.
+        ignoreNullValues: "true"
+{{- end }}

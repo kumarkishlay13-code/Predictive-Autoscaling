@@ -1,0 +1,14 @@
+{
+  "name": "arima",
+  "trained_quantile": null,
+  "order": [
+    1,
+    1,
+    1
+  ],
+  "trend": "n",
+  "harmonics": 4,
+  "fit_minutes": 4320,
+  "context_minutes": 1440,
+  "pas_version": "0.1.0"
+}

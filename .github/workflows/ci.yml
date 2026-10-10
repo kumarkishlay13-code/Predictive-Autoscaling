@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -e ".[dev,lstm,plots]"
+      - name: Lint
+        run: ruff check src tests
+      - name: Test
+        run: pytest
+
+  go:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: app/go.mod
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test ./...
+
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Lint and render the chart in every scaler mode
+        run: |
+          set -e
+          SET="--set app.image.repository=r/a --set app.image.tag=t --set forecaster.image.repository=r/f --set forecaster.image.tag=t"
+          helm lint charts/workload $SET
+          for mode in off static hpa predictive; do
+            helm template lane charts/workload -n lane-a $SET --set scaler.mode=$mode > /dev/null
+          done
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform fmt and validate
+        working-directory: infra/terraform
+        run: |
+          terraform fmt -check
+          terraform init -backend=false -input=false
+          terraform validate

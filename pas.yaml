@@ -1,0 +1,114 @@
+# pas.yaml — single source of truth for the study.
+# Every `pas` command reads this file (override with `pas --config other.yaml ...`).
+# Values marked MEASURE come from your own tests; update them, then rebuild data/models.
+
+trace:
+  # Azure Functions Trace 2019 (CC-BY 4.0). Cite: Shahrad et al., USENIX ATC 2020.
+  archive_url: https://github.com/Azure/AzurePublicDataset/releases/download/dataset-functions-2019/azurefunctions_dataset2019_azurefunctions-dataset2019.tar.xz
+  raw_dir: data/raw
+  processed_dir: data/processed
+  # "total" = sum of all functions, or an app hash from `pas data apps` (ADR-010).
+  # Chosen: strong daily peak (0 -> ~200 RPS), steep ramps and two scheduled night-time surges
+  # at the same minutes every day (reports/figures/apps.png).
+  # Robustness check, a smooth diurnal app: 79da35aad06d8db1500bd1e34fb8f5df2ec1b5631c6941d58013bf7fb43d2b08
+  signal: 70ac91b1c221c45c97cb41f2bd3a7ae1f2cae2f69d67ad68e15fb366869d4e4a
+  # Optional trigger filter: http | timer | event | queue | storage | orchestration | others | null
+  trigger: null
+  # The trace publishes day numbers, not dates. Day 1 is mapped to this nominal date (UTC).
+  start_date: "2019-07-15"
+  days: 14
+  train_days: [1, 10]       # inclusive ranges
+  val_days: [11, 12]
+  test_days: [13, 14]       # live experiment windows must come from these days only
+
+capacity:
+  per_pod_rps: 20           # MEASURE with `pas capacity` (≈20 for 20 work units on 250m CPU)
+  min_replicas: 2
+  max_replicas: 20
+  # The scaled trace's peak (99.5th percentile) = peak_utilisation × max_replicas × per_pod_rps.
+  peak_utilisation: 0.75
+
+slo:
+  p95_latency_ms: 300       # confirm after the capacity test
+  error_rate: 0.01
+
+app:
+  startup_delay_seconds: 60 # simulated warm-up; sensitivity runs use 0/30/60/120
+  work_units: 20            # CPU work per request (see app/README.md)
+
+forecast:
+  horizon_minutes: 10
+  lead_minutes: [2, 4]      # scale for the max forecast inside [t+2, t+4] (MEASURE the lag with `pas lag`)
+  headroom: 0.2             # KEDA threshold = per_pod_rps × (1 − headroom)
+  history_minutes: 4320     # 3 days of context given to models and the live forecaster
+  interval_seconds: 30      # live forecaster cycle
+
+windows:
+  # start: "HH:MM" on `day`, or "auto:ramp" / "auto:peak" to pick the 2-h window automatically.
+  - name: W1
+    description: Morning ramp (trough to peak)
+    day: 13
+    start: auto:ramp
+    minutes: 120
+  - name: W2
+    description: Busiest period with recurring bursts
+    day: 14
+    start: auto:peak
+    minutes: 120
+  - name: W3
+    description: W2 plus an unannounced flash crowd (negative control)
+    base: W2
+    spike: {at_minute: 60, minutes: 5, factor: 3.0}
+  - name: W4
+    description: Scheduled night-time surge (idle to ~140 RPS at 20:47 every day)
+    day: 14
+    start: "20:30"
+    minutes: 30
+  - name: WD
+    description: Short window for the viva demo
+    day: 13
+    start: auto:ramp
+    minutes: 30
+
+# Scaler presets used by `pas lane deploy --scaler NAME` and by experiment plans.
+# Predictive presets reuse the tuned HPA's behaviour and CPU target (YAML anchors), so the only
+# difference from `hpa-tuned` is the forecast signal: a clean ablation.
+scalers:
+  "off":      {mode: "off"}   # quoted: YAML reads a bare off as false
+  static:     {mode: static}
+  hpa-default:
+    mode: hpa
+    cpu_target_percent: 70
+  hpa-tuned:
+    mode: hpa
+    cpu_target_percent: &tuned_cpu 50
+    behavior: &tuned_behavior
+      scaleUp:
+        stabilizationWindowSeconds: 0
+        policies: [{type: Percent, value: 100, periodSeconds: 15}]
+      scaleDown:
+        stabilizationWindowSeconds: 300
+  naive:     {mode: predictive, model: naive, cpu_target_percent: *tuned_cpu, behavior: *tuned_behavior}
+  arima:     {mode: predictive, model: arima, cpu_target_percent: *tuned_cpu, behavior: *tuned_behavior}
+  arima-p90: {mode: predictive, model: arima, quantile: 0.9, cpu_target_percent: *tuned_cpu, behavior: *tuned_behavior}
+  lstm:      {mode: predictive, model: lstm, cpu_target_percent: *tuned_cpu, behavior: *tuned_behavior}
+  lstm-p90:  {mode: predictive, model: lstm-p90, cpu_target_percent: *tuned_cpu, behavior: *tuned_behavior}
+  oracle:    {mode: predictive, model: oracle, cpu_target_percent: *tuned_cpu, behavior: *tuned_behavior}
+  # Ablation: forecast only, no CPU safety net.
+  arima-only: {mode: predictive, model: arima, hybrid: false, behavior: *tuned_behavior}
+
+# Lanes are isolated namespaces, each pinned to its own node pool, so two runs can go in parallel.
+lanes:
+  lane-a: {node_pool: app}
+  lane-b: {node_pool: appb}
+
+backtest:
+  stride_minutes: 5
+  horizons: [1, 3, 5, 10]
+
+cluster:
+  prometheus_service: monitoring/kube-prometheus-stack-prometheus
+  grafana_service: monitoring/kube-prometheus-stack-grafana
+  k6_image: grafana/k6:2.2.0
+  # Filled automatically from `terraform output` when empty.
+  acr_login_server: ""

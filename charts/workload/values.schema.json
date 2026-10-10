@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["app", "scaler"],
+  "properties": {
+    "app": {
+      "type": "object",
+      "required": ["image"],
+      "properties": {
+        "image": {
+          "type": "object",
+          "required": ["repository", "tag"],
+          "properties": {
+            "repository": {"type": "string", "minLength": 1},
+            "tag": {"type": "string", "minLength": 1}
+          }
+        },
+        "startupDelaySeconds": {"type": "number", "minimum": 0},
+        "workUnits": {"type": "integer", "minimum": 0},
+        "nodePool": {"type": "string"}
+      }
+    },
+    "scaler": {
+      "type": "object",
+      "required": ["mode", "minReplicas", "maxReplicas"],
+      "properties": {
+        "mode": {"enum": ["off", "static", "hpa", "predictive"]},
+        "minReplicas": {"type": "integer", "minimum": 1},
+        "maxReplicas": {"type": "integer", "minimum": 1},
+        "staticReplicas": {"type": "integer", "minimum": 1},
+        "cpuTargetPercent": {"type": "integer", "minimum": 1, "maximum": 100},
+        "hybrid": {"type": "boolean"},
+        "thresholdRps": {"type": "number", "exclusiveMinimum": 0},
+        "pollingIntervalSeconds": {"type": "integer", "minimum": 1}
+      }
+    },
+    "forecaster": {
+      "type": "object",
+      "properties": {
+        "model": {"enum": ["naive", "last", "arima", "lstm", "lstm-p90", "oracle"]},
+        "quantile": {"type": "string", "pattern": "^(|0?[.][0-9]+)$"},
+        "horizon": {"type": "integer", "minimum": 1},
+        "lead": {"type": "string", "pattern": "^[0-9]+,[0-9]+$"},
+        "intervalSeconds": {"type": "number", "exclusiveMinimum": 0},
+        "historyMinutes": {"type": "integer", "minimum": 1}
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{{- $mode := .Values.scaler.mode }}
+{{- if or (eq $mode "hpa") (eq $mode "static") }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ .Values.app.name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+  annotations:
+    pas.dev/scaler-mode: {{ $mode }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ .Values.app.name }}
+  {{- if eq $mode "static" }}
+  # Static provisioning is an HPA pinned at min = max.
+  minReplicas: {{ .Values.scaler.staticReplicas }}
+  maxReplicas: {{ .Values.scaler.staticReplicas }}
+  {{- else }}
+  minReplicas: {{ .Values.scaler.minReplicas }}
+  maxReplicas: {{ .Values.scaler.maxReplicas }}
+  {{- end }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.scaler.cpuTargetPercent }}
+  {{- with .Values.scaler.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

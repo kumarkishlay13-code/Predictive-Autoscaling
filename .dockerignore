@@ -1,0 +1,20 @@
+# Build context for docker/forecaster.Dockerfile (repository root). Keep it small.
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+data/
+results/
+experiments/results/
+reports/
+infra/
+charts/
+docs/
+app/
+loadgen/
+tests/
+*.md
+!README.md

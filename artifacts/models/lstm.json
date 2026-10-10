@@ -1,0 +1,12 @@
+{
+  "name": "lstm",
+  "trained_quantile": null,
+  "window": 60,
+  "horizon": 10,
+  "hidden": 64,
+  "layers": 2,
+  "dropout": 0.2,
+  "epochs_run": 17,
+  "seed": 42,
+  "pas_version": "0.1.0"
+}

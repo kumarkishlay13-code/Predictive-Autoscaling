@@ -1,0 +1,117 @@
+{{- if eq .Values.scaler.mode "predictive" }}
+{{- $name := include "workload.forecasterName" . }}
+{{- if .Values.forecaster.window }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-window
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+data:
+  window.json: {{ .Values.forecaster.window | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+    {{- include "workload.forecasterSelector" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "workload.forecasterSelector" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "workload.labels" . | nindent 8 }}
+        {{- include "workload.forecasterSelector" . | nindent 8 }}
+      annotations:
+        # Restart the forecaster when the replay window changes.
+        checksum/window: {{ .Values.forecaster.window | sha256sum }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.forecaster.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: forecaster
+          image: "{{ .Values.forecaster.image.repository }}:{{ .Values.forecaster.image.tag }}"
+          imagePullPolicy: {{ .Values.forecaster.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - {name: PAS_MODEL, value: {{ .Values.forecaster.model | quote }}}
+            - {name: PAS_LANE, value: {{ .Release.Namespace | quote }}}
+            - {name: PAS_PROMETHEUS_URL, value: {{ .Values.forecaster.prometheusUrl | quote }}}
+            - {name: PAS_HORIZON, value: {{ .Values.forecaster.horizon | quote }}}
+            - {name: PAS_LEAD, value: {{ .Values.forecaster.lead | quote }}}
+            - {name: PAS_QUANTILE, value: {{ .Values.forecaster.quantile | quote }}}
+            - {name: PAS_INTERVAL_SECONDS, value: {{ .Values.forecaster.intervalSeconds | quote }}}
+            - {name: PAS_HISTORY_MINUTES, value: {{ .Values.forecaster.historyMinutes | quote }}}
+            {{- if .Values.forecaster.window }}
+            - {name: PAS_WINDOW_FILE, value: /windows/window.json}
+            {{- end }}
+            - {name: HOME, value: /tmp}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 15
+          resources:
+            {{- toYaml .Values.forecaster.resources | nindent 12 }}
+          securityContext:
+            {{- include "workload.containerSecurity" . | nindent 12 }}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            {{- if .Values.forecaster.window }}
+            - {name: window, mountPath: /windows, readOnly: true}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.forecaster.window }}
+        - name: window
+          configMap:
+            name: {{ $name }}-window
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+    {{- include "workload.forecasterSelector" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "workload.forecasterSelector" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+{{- if .Values.serviceMonitor.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "workload.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "workload.forecasterSelector" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}
+{{- end }}

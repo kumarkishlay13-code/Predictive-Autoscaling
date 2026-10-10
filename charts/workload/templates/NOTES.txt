@@ -1,0 +1,8 @@
+Lane {{ .Release.Namespace }} deployed: scaler mode = {{ .Values.scaler.mode }}
+{{- if eq .Values.scaler.mode "predictive" }} (model {{ .Values.forecaster.model }}{{ if .Values.scaler.hybrid }}, hybrid with CPU{{ end }}){{ end }}
+
+  Watch replicas:   kubectl -n {{ .Release.Namespace }} get deploy,hpa -w
+{{- if eq .Values.scaler.mode "predictive" }}
+  Latest forecast:  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "workload.forecasterName" . }} 8000:80
+                    then open http://localhost:8000/forecast
+{{- end }}

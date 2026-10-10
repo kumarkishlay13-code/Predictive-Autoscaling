@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars (git-ignored) and fill in.
+subscription_id = "00000000-0000-0000-0000-000000000000"
+location        = "centralindia"
+
+# Lean defaults: 1 system + 3 app + 1 loadgen node, all Standard_D2s_v5 (10 vCPU in total).
+# app_node_count         = 3
+# second_lane_node_count = 3   # enable for parallel lanes (needs 6 more vCPU of quota)
+
+# Budget alert at 50/80/100 % of this monthly amount (billing currency).
+budget_amount     = 50
+budget_emails     = ["you@example.com"]
+budget_start_date = "2026-10-01T00:00:00Z"

@@ -1,0 +1,8 @@
+apiVersion: v2
+name: workload
+description: >-
+  One experiment lane: demo-api plus the scaler under test (off, static, HPA, or the
+  KEDA-driven predictive scaler with its forecaster).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

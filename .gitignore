@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Data and results (large; reproducible with `pas data download/build` and the experiments)
+data/raw/
+data/processed/
+experiments/results/
+experiments/plan.csv
+reports/backtest/*.csv
+
+# Local state written by `pas` (cluster names, image tags)
+.pas/
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/terraform.tfvars
+infra/terraform/crash.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

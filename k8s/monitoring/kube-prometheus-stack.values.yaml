@@ -1,0 +1,58 @@
+# kube-prometheus-stack values. Installed by `pas platform install` as release
+# "kube-prometheus-stack" in namespace "monitoring". Everything runs on the system pool so the
+# app and load-generator pools only carry what is being measured.
+
+alertmanager:
+  enabled: false
+
+# AKS manages the control plane; these targets are not scrapeable and would only add errors.
+kubeEtcd: {enabled: false}
+kubeControllerManager: {enabled: false}
+kubeScheduler: {enabled: false}
+kubeProxy: {enabled: false}
+
+prometheusOperator:
+  nodeSelector: {kubernetes.azure.com/mode: system}
+
+kube-state-metrics:
+  nodeSelector: {kubernetes.azure.com/mode: system}
+
+prometheus-node-exporter:
+  # Run on every node, including the tainted app and loadgen pools.
+  tolerations:
+    - operator: Exists
+
+grafana:
+  nodeSelector: {kubernetes.azure.com/mode: system}
+  # Dashboards in ConfigMaps labelled grafana_dashboard=1 are loaded automatically.
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+  defaultDashboardsTimezone: browser
+
+prometheus:
+  prometheusSpec:
+    nodeSelector: {kubernetes.azure.com/mode: system}
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    retention: 15d
+    # k6 pushes client-side latency and errors here (k6 -o experimental-prometheus-rw).
+    enableRemoteWriteReceiver: true
+    # Pick up every ServiceMonitor in the cluster, not only those labelled for this release.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    resources:
+      requests: {cpu: 200m, memory: 1Gi}
+      limits: {memory: 2500Mi}
+    # A persistent volume keeps data across `az aks stop/start`. Each run is also exported to
+    # parquet at its end, so this is a convenience, not the system of record.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: managed-csi
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
