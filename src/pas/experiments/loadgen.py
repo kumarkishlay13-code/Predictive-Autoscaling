@@ -67,7 +67,9 @@ def k6_job(cfg: Config, *, name: str, namespace: str, script: str, run_id: str,
                                  "--tag", f"lane={namespace}", "--tag", f"run={run_id}",
                                  f"/scripts/{script}"],
                         "env": [{"name": k, "value": str(v)} for k, v in env.items()],
-                        "resources": {"requests": {"cpu": "1", "memory": "1Gi"},
+                        # 500m leaves room for two Jobs (demo, parallel lanes) on one
+                        # 2-vCPU loadgen node; k6 may burst above it.
+                        "resources": {"requests": {"cpu": "500m", "memory": "1Gi"},
                                       "limits": {"memory": "3Gi"}},
                         "volumeMounts": mounts,
                     }],

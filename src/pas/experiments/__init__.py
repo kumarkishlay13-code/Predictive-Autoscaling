@@ -1,1 +1,1 @@
-"""Lanes, load generation, the experiment protocol and measurements on AKS."""
+"""Lanes, load generation, the experiment protocol, measurements and the smoke test."""

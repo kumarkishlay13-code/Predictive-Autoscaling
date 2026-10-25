@@ -1,0 +1,4 @@
+# KEDA values for the local kind cluster (`pas platform install`). On AKS, KEDA is the managed
+# add-on enabled in Terraform instead.
+nodeSelector:
+  pas.dev/pool: system

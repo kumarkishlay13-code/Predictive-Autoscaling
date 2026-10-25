@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Forecaster service image. Build from the repository root:
-#   az acr build -r <acr> -t pas/forecaster:<tag> -f docker/forecaster.Dockerfile .
+#   docker build -t pas/forecaster:<tag> -f docker/forecaster.Dockerfile .   (`pas build` does this)
 # Set --build-arg WITH_LSTM=true to include PyTorch (CPU) for the LSTM models.
 FROM python:3.12-slim
 

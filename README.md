@@ -1,13 +1,19 @@
-# Predictive autoscaling on AKS
+# Predictive autoscaling for Kubernetes
 
 Forecast-driven (proactive) pod autoscaling for Kubernetes, evaluated head-to-head against the
-standard reactive Horizontal Pod Autoscaler on Azure Kubernetes Service.
+standard reactive Horizontal Pod Autoscaler. Everything runs on one machine: a local
+[kind](https://kind.sigs.k8s.io) cluster in Docker with Prometheus, Grafana, KEDA and
+metrics-server. No cloud account is needed. Azure Kubernetes Service remains an optional
+target (ADR-013).
 
 A real workload trace (Azure Functions 2019) is replayed against a small service. A forecaster
 predicts the next minutes of demand and KEDA scales the service *before* the load arrives, with
 CPU-based scaling kept as a safety net. Everything needed for the study is here: data
-preparation, forecasting models and backtests, the forecaster service, Helm chart, Terraform,
-load generation, the experiment runner and the analysis. It is all driven by one command, `pas`.
+preparation, forecasting models and backtests, the forecaster service, Helm chart, the local
+cluster definition, load generation, the experiment runner and the analysis. It is all driven by
+one command, `pas`.
+
+**New machine? Start with [docs/setup-and-testing.md](docs/setup-and-testing.md).**
 
 > BITS Pilani SSWT ZG628T dissertation project, *Predictive Autoscaling for Kubernetes
 > Workloads: A Machine Learning Approach to Proactive Pod Scaling on AKS*.
@@ -20,16 +26,18 @@ load generation, the experiment runner and the analysis. It is all driven by one
 | Data pipeline, models, backtests | Working on the real trace; results in [docs/findings.md](docs/findings.md) |
 | Forecaster service | Tested (unit tests and an HTTP run against a stub Prometheus) |
 | demo-api, k6 scripts | Tested locally (Go tests; k6 replay, capacity and remote-write output verified) |
-| Helm chart, Terraform, monitoring values | Lint/validate/render clean; **not yet applied to AKS** |
-| Experiment runner, analysis | Unit-tested with synthetic runs; first real run happens on AKS |
+| Local platform (kind, KEDA, metrics-server, Prometheus) | Unit-tested; the CI `kind` job runs `pas infra up`, `platform install`, `build` and `smoke` on a real kind cluster |
+| Helm chart, monitoring values | Lint and render clean in every mode; exercised by the CI smoke test |
+| Experiment runner, analysis | Unit-tested with synthetic runs; first measured runs on the experiment workstation |
+| Terraform (optional AKS) | `terraform validate` clean; never applied |
 
 ---
 
 ## Contents
 
 - [How it works](#how-it-works)
-- [Quick start (laptop, no Azure)](#quick-start-laptop-no-azure)
-- [Running on AKS](#running-on-aks)
+- [Quick start](#quick-start)
+- [Running the study](#running-the-study)
 - [Command reference](#command-reference)
 - [Configuration: pas.yaml](#configuration-pasyaml)
 - [Repository layout](#repository-layout)
@@ -59,16 +67,16 @@ trace window ─► k6 (open-model load) ─► demo-api pods ─► Prometheus
 
 Details: [docs/architecture.md](docs/architecture.md).
 
-## Quick start (laptop, no Azure)
+## Quick start
 
-Everything except the live experiments runs locally on Windows, macOS or Linux, and needs no
-Docker.
+Two levels, depending on the machine:
 
-**Prerequisites:** Python 3.11+, Git. Optional: Go 1.27 (to test the app) and k6 (to load-test
-it locally).
+- **Offline (any laptop, no Docker):** data, models, backtests, unit tests. Python 3.11+ and Git.
+- **Full study (workstation):** adds Docker, kind, kubectl and Helm, with 8+ cores and 16 GB
+  RAM. Follow [docs/setup-and-testing.md](docs/setup-and-testing.md).
 
 ```powershell
-git clone <this repository> predictive-autoscaling
+git clone https://github.com/kumarkishlay13-code/Predictive-Autoscaling.git predictive-autoscaling
 cd predictive-autoscaling
 python -m pip install -e ".[dev,plots]"     # add ,lstm for PyTorch (LSTM models)
 pas doctor                                  # what is installed, what is missing
@@ -99,32 +107,32 @@ k6 run -e TARGET=http://localhost:8080 -e WINDOW_FILE=windows/WD.json `
 replays one trace minute every 5 seconds and `WORK_UNITS=1` keeps a laptop from saturating. Use
 these only for smoke tests; real experiments replay in real time.
 
-## Running on AKS
+## Running the study
 
-Follow [docs/runbook.md](docs/runbook.md). In short:
+Setup: [docs/setup-and-testing.md](docs/setup-and-testing.md). Day-to-day procedures:
+[docs/runbook.md](docs/runbook.md). In short:
 
 ```powershell
-az login
-copy infra\terraform\terraform.tfvars.example infra\terraform\terraform.tfvars   # edit it
-pas infra up                 # AKS (system, app, loadgen pools), ACR, KEDA add-on, budget alert
-pas platform install         # Prometheus + Grafana + dashboard
-pas build                    # images built in Azure, no local Docker needed
+pas infra up                 # kind cluster: control plane + system, app, appb, loadgen nodes
+pas platform install         # metrics-server, KEDA, Prometheus + Grafana + dashboard
+pas build                    # docker build + kind load (no registry)
+pas smoke                    # 5-minute end-to-end check of the control loop
 pas capacity                 # per-pod capacity -> set capacity.per_pod_rps in pas.yaml
 pas lag                      # scaling lag -> set forecast.lead_minutes
 pas experiment plan
 pas experiment run           # resumable; run it again after any interruption
 pas analyze --plots          # reports/summary.md, reports/runs.csv, reports/figures/
-pas infra stop               # stop paying for nodes between sessions
+pas infra stop               # stop the node containers between sessions
 ```
 
-Lean cluster: 5 × Standard_D2s_v5 (10 vCPU), about US$0.50 per hour while running. **Check your
-vCPU quota first** (runbook §1).
+Run measured experiments on one lane at a time: kind nodes share the host CPUs (ADR-013). To use
+AKS instead, set `cluster.provider: aks` and see the runbook's appendix A.
 
 ## Command reference
 
 | Command | What it does | Writes |
 |---|---|---|
-| `pas doctor` | Checks tools, config, data, models, cluster, KEDA, monitoring, images | – |
+| `pas doctor` | Checks tools, Docker resources, config, data, models, kube context, node pools, metrics-server, KEDA, monitoring, images | – |
 | `pas data download` | Downloads and unpacks the invocation files of the trace | `data/raw/` |
 | `pas data apps` | Ranks the busiest apps by daily regularity and variation | – |
 | `pas data build [--plot]` | Builds the scaled load series and all replay windows | `data/processed/`, `loadgen/windows/` |
@@ -132,9 +140,10 @@ vCPU quota first** (runbook §1).
 | `pas train MODEL…` | Fits `naive`, `last`, `arima`, `lstm`, `lstm-p90`, `prophet` | `artifacts/models/` |
 | `pas backtest MODEL… [--quantile 0.9] [--split val\|test]` | Rolling-origin accuracy per horizon (MAE, RMSE, MASE, sMAPE, under-prediction, pinball) | `reports/backtest/` |
 | `pas serve` | Runs the forecaster service (normally in the cluster) | – |
-| `pas infra up\|stop\|start\|down\|outputs` | Terraform apply/destroy, AKS stop/start | `.pas/state.json` |
-| `pas build [--only …] [--with-lstm]` | Builds images with ACR Tasks, tagged with the git commit | `.pas/state.json` |
-| `pas platform install\|dashboards` | kube-prometheus-stack and the Grafana dashboard | – |
+| `pas infra up\|stop\|start\|down\|outputs` | Creates, stops, starts or deletes the kind cluster (AKS: Terraform, `az aks stop/start`) | `.pas/state.json` |
+| `pas build [--only …] [--with-lstm]` | Builds images tagged with the git commit and loads them into the kind nodes (AKS: ACR Tasks) | `.pas/state.json` |
+| `pas platform install\|dashboards` | metrics-server and KEDA (local only), kube-prometheus-stack, the Grafana dashboard | – |
+| `pas smoke [--scaler P] [--window W]` | Short time-compressed replay, then checks every link of the control loop | – |
 | `pas grafana`, `pas prometheus` | Port-forward and print the URL (and Grafana password) | – |
 | `pas lane deploy LANE --scaler PRESET [--window W] [--startup-delay N]` | Deploys one scaler preset to a lane | – |
 | `pas lane status LANE` | Deployments, HPAs, ScaledObjects, pods | – |
@@ -163,6 +172,7 @@ the relevant parts in its `meta.json`.
 | `windows` | Replay windows (fixed time or `auto:ramp` / `auto:peak`), spikes | rarely |
 | `scalers` | Named presets: mode, model, quantile, HPA behaviour | to add a variant |
 | `lanes` | Namespace → node pool | when adding lanes |
+| `cluster` | `provider` (`local` or `aks`), kind cluster name and config, service names | to switch to AKS |
 
 After changing `trace` or `capacity`, rerun `pas data build`, `pas train …` and
 `pas build --only forecaster`, because the load series is scaled to capacity and the models are
@@ -174,16 +184,17 @@ baked into the image.
 app/                    Go workload (demo-api) + Dockerfile
 charts/workload/        Helm chart for one lane (app + scaler + forecaster), with values schema
 docker/                 forecaster image
-docs/                   architecture, decision log (ADRs), runbook
+docs/                   setup and testing, architecture, decision log (ADRs), runbook, findings
 experiments/            matrix.yaml; plan.csv and results/ are generated (git-ignored)
-infra/terraform/        AKS, node pools, ACR, budget alert
-k8s/monitoring/         kube-prometheus-stack values, Grafana dashboard
+infra/kind/             local cluster: nodes standing in for the system/app/appb/loadgen pools
+infra/terraform/        optional AKS: node pools, ACR, budget alert
+k8s/monitoring/         kube-prometheus-stack, metrics-server and KEDA values, Grafana dashboard
 loadgen/                k6 scripts; windows/ generated by `pas data build`
 src/pas/                Python package and CLI
   data/                 trace download, load series, windows
   models/               naive, ARIMA, LSTM, Prophet, oracle
   forecaster/           live service (engine + HTTP)
-  experiments/          lanes, k6 jobs, runner, capacity and lag, export
+  experiments/          lanes, k6 jobs, runner, capacity and lag, smoke test, export
   analysis/             metrics, comparison, figures
 tests/                  pytest suite (synthetic data, no cluster needed)
 pas.yaml                study configuration
@@ -193,7 +204,7 @@ pas.yaml                study configuration
 
 | Plan item | Commands | Evidence produced |
 |---|---|---|
-| Wk 3: environment, capacity, lag | `pas infra up`, `pas platform install`, `pas capacity`, `pas lag` | `reports/capacity.json`, `reports/lag-d*.json` |
+| Wk 3: environment, capacity, lag | `pas infra up`, `pas platform install`, `pas smoke`, `pas capacity`, `pas lag` | `reports/capacity.json`, `reports/lag-d*.json` |
 | Wk 4: dataset and replay | `pas data download/apps/build --plot` | `data/processed/series.json`, `reports/figures/series.png`, `loadgen/windows/` |
 | Wk 5–6: reactive baseline, end-to-end loop | `pas experiment run --only …` with `hpa-default`, `hpa-tuned`, `naive`, `oracle` | `experiments/results/`, `pas analyze` |
 | Wk 7–8: statistical models (RQ1) | `pas train arima`, `pas backtest naive last arima` | `reports/backtest/summary-test.md` |
@@ -213,6 +224,8 @@ terraform -chdir=infra/terraform validate
 ```
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs all of the above on every push.
+A further `kind` job then creates a kind cluster on the runner and runs `pas infra up`,
+`pas platform install`, `pas build` and `pas smoke`, which tests the whole local platform.
 
 Conventions: one configuration file; every cluster action is a printed, reproducible command;
 every design choice that needs a reason goes into [docs/decisions.md](docs/decisions.md).

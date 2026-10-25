@@ -1,0 +1,7 @@
+# metrics-server values for the local kind cluster (`pas platform install`). AKS ships its own
+# metrics-server. The HPA and KEDA's CPU trigger read pod CPU from it.
+args:
+  # kind's kubelets serve self-signed certificates.
+  - --kubelet-insecure-tls
+nodeSelector:
+  pas.dev/pool: system

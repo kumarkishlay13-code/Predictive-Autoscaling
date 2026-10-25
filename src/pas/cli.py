@@ -20,12 +20,13 @@ typical workflow:
   pas data download && pas data build trace -> load series + replay windows
   pas train naive arima               fit models on the training days
   pas backtest naive arima            offline accuracy (RQ1)
-  pas infra up && pas platform install
-  pas build                           container images via ACR (no local Docker)
+  pas infra up && pas platform install local kind cluster (or AKS), Prometheus, KEDA
+  pas build                           container images (docker + kind load, or ACR)
+  pas smoke                           5-minute end-to-end check of the control loop
   pas capacity && pas lag             measure per-pod capacity and scaling lag
   pas experiment plan && pas experiment run
   pas analyze                         tables and figures for the report
-docs: README.md and docs/
+docs: README.md, docs/setup-and-testing.md and docs/
 """
 
 
@@ -185,7 +186,7 @@ def cmd_infra(cfg: Config, args: argparse.Namespace) -> None:
     elif args.action == "down":
         infra.infra_down(cfg, auto_approve=args.yes)
     elif args.action in ("stop", "start"):
-        infra.aks_power(cfg, args.action)
+        infra.cluster_power(cfg, args.action)
     elif args.action == "outputs":
         print(json.dumps(infra.cluster_info(cfg), indent=2))
 
@@ -235,6 +236,20 @@ def cmd_lane(cfg: Config, args: argparse.Namespace) -> None:
     else:
         run(["kubectl", "-n", args.lane, "get", "deploy,hpa,scaledobject,pods", "-o", "wide"],
             check=False)
+
+
+def cmd_smoke(cfg: Config, args: argparse.Namespace) -> None:
+    from pas.experiments.smoke import smoke_test
+
+    checks = smoke_test(cfg, args.lane, args.scaler, args.window, minutes=args.minutes,
+                        step_seconds=args.step_seconds, work_units=args.work_units)
+    print(f"\nsmoke test: lane {args.lane}, scaler {args.scaler}, window {args.window}")
+    for c in checks:
+        print(f"  [{'ok' if c.ok else '!!'}] {c.label}" + ("" if c.ok else f"  -> {c.detail}"))
+    failed = [c for c in checks if not c.ok]
+    if failed:
+        raise CommandError(f"smoke test failed: {len(failed)} of {len(checks)} checks")
+    print("all checks passed: the control loop is wired up end to end")
 
 
 def cmd_capacity(cfg: Config, args: argparse.Namespace) -> None:
@@ -328,29 +343,41 @@ def cmd_demo(cfg: Config, args: argparse.Namespace) -> None:
 
 
 def cmd_doctor(cfg_path: str) -> int:
-    from pas.kube import find_tool, output
+    from pas.kube import INSTALL_HINTS, find_tool, output
 
     problems = 0
 
-    def check(ok: bool, label: str, hint: str = "") -> None:
+    def check(ok: bool, label: str, hint: str = "", optional: bool = False) -> None:
         nonlocal problems
-        print(f"  [{'ok' if ok else '!!'}] {label}" + ("" if ok or not hint else f"  -> {hint}"))
-        problems += 0 if ok else 1
+        mark = "ok" if ok else ("--" if optional else "!!")
+        print(f"  [{mark}] {label}" + ("" if ok or not hint else f"  -> {hint}"))
+        problems += 0 if ok or optional else 1
 
     print(f"pas {__version__}, Python {platform.python_version()} on {platform.system()}")
-    print("tools")
-    for tool, needed_for in (("git", "versioning"), ("kubectl", "cluster"), ("helm", "cluster"),
-                             ("az", "Azure"), ("terraform", "Azure"), ("k6", "local load tests"),
-                             ("go", "building/testing demo-api locally")):
-        check(find_tool(tool) is not None, f"{tool:<10} ({needed_for})",
-              "winget install, then open a new terminal")
-    print("project")
     try:
         cfg = load_config(cfg_path)
-        check(True, f"config {cfg_path}")
     except ConfigError as exc:
-        check(False, f"config {cfg_path}", str(exc))
+        print(f"  [!!] config {cfg_path}  -> {exc}")
         return 1
+    local = cfg.cluster.is_local
+    print(f"tools (provider: {cfg.cluster.provider})")
+    required = ["git", "kubectl", "helm"] + (["docker", "kind"] if local else ["az", "terraform"])
+    for tool in required:
+        check(find_tool(tool) is not None, tool, INSTALL_HINTS.get(tool, ""))
+    for tool, needed_for in (("k6", "load tests outside the cluster"),
+                             ("go", "testing demo-api outside Docker")):
+        check(find_tool(tool) is not None, f"{tool} (optional: {needed_for})", optional=True)
+    if local and find_tool("docker"):
+        try:
+            cpus, mem = output(["docker", "info", "--format", "{{.NCPU}} {{.MemTotal}}"],
+                               timeout=20).split()
+            gib = int(mem) / 2**30
+            check(int(cpus) >= 8 and gib >= 12, f"Docker engine: {cpus} CPUs, {gib:.1f} GiB",
+                  "8+ CPUs and 12+ GiB recommended (docs/setup-and-testing.md)")
+        except Exception as exc:  # noqa: BLE001 - any failure means Docker is not usable
+            check(False, "Docker engine running", f"{exc}".splitlines()[0])
+    print("project")
+    check(True, f"config {cfg_path}")
     check(any(cfg.trace.raw_dir.glob("invocations_per_function_md.anon.d*.csv")),
           "trace downloaded", "pas data download")
     check(cfg.series_path.exists(), "load series built", "pas data build")
@@ -363,23 +390,33 @@ def cmd_doctor(cfg_path: str) -> int:
         check(False, "kubectl missing; skipping cluster checks")
         return problems
     try:
-        context = output(["kubectl", "config", "current-context"], timeout=10)
-        check(True, f"kube context: {context}")
+        from pas.infra import cluster_info
+        expected = cluster_info(cfg)["context"]
+        context = output(["kubectl", "config", "current-context"], check=False, timeout=10)
+        check(context == expected, f"kube context: {context or 'none'} (expected {expected})",
+              f"pas infra up, or kubectl config use-context {expected}")
         nodes = output(["kubectl", "get", "nodes", "-o", "name"], timeout=20)
         check(bool(nodes), f"cluster reachable ({len(nodes.split())} nodes)")
         pools = output(["kubectl", "get", "nodes", "-o",
                         "jsonpath={.items[*].metadata.labels.pas\\.dev/pool}"], timeout=20)
-        check("app" in pools and "loadgen" in pools, f"node pools labelled: {pools or 'none'}",
-              "pas infra up")
+        wanted = {"system", "loadgen", *(str(v.get("node_pool")) for v in cfg.lanes.values())}
+        check(wanted <= set(pools.split()), f"node pools labelled: {pools or 'none'}",
+              f"need {', '.join(sorted(wanted))}: pas infra up")
+        if local:
+            ms = output(["kubectl", "get", "apiservice", "v1beta1.metrics.k8s.io", "-o", "name"],
+                        check=False, timeout=20)
+            check(bool(ms), "metrics-server installed", "pas platform install")
         keda = output(["kubectl", "get", "crd", "scaledobjects.keda.sh", "-o", "name"],
                       check=False, timeout=20)
-        check(bool(keda), "KEDA installed", "az aks update --enable-keda")
+        check(bool(keda), "KEDA installed",
+              "pas platform install" if local else "az aks update --enable-keda")
         mon = output(["kubectl", "-n", "monitoring", "get", "svc", "-o", "name"], check=False,
                      timeout=20)
         check("kube-prometheus-stack-prometheus" in mon, "monitoring installed",
               "pas platform install")
     except Exception as exc:  # noqa: BLE001 - report any cluster problem as a failed check
-        check(False, "cluster", f"{exc}".splitlines()[0] + " (pas infra up / az login)")
+        hint = "pas infra up / pas infra start" if local else "pas infra up / az login"
+        check(False, "cluster", f"{exc}".splitlines()[0] + f" ({hint})")
     from pas.infra import load_state
     images = load_state(cfg).get("images", {})
     check(bool(images), f"images built: {images or 'none'}", "pas build")
@@ -427,17 +464,18 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--window", help="window JSON for experiment mode")
     s.add_argument("--interval", type=float, help="seconds between forecasts")
 
-    i = sub.add_parser("infra", help="create, stop, start or destroy the AKS environment")
+    i = sub.add_parser("infra", help="create, stop, start or delete the cluster (kind or AKS)")
     i.add_argument("action", choices=["up", "down", "stop", "start", "outputs"])
-    i.add_argument("--yes", action="store_true", help="skip Terraform's confirmation")
+    i.add_argument("--yes", action="store_true", help="aks: skip Terraform's confirmation")
 
-    bu = sub.add_parser("build", help="build container images in ACR (no local Docker needed)")
+    bu = sub.add_parser("build", help="build container images (docker + kind load, or ACR)")
     bu.add_argument("--only", nargs="+", choices=["demo-api", "forecaster"])
     bu.add_argument("--tag", help="image tag (default: git commit)")
     bu.add_argument("--with-lstm", action=argparse.BooleanOptionalAction, default=None,
                     help="include PyTorch in the forecaster (default: if an LSTM is trained)")
 
-    pl = sub.add_parser("platform", help="install Prometheus/Grafana and the dashboard")
+    pl = sub.add_parser("platform", help="install Prometheus, Grafana and the dashboard "
+                        "(locally also KEDA and metrics-server)")
     pl.add_argument("action", choices=["install", "dashboards"])
 
     for name in ("grafana", "prometheus"):
@@ -450,6 +488,14 @@ def build_parser() -> argparse.ArgumentParser:
     la.add_argument("--scaler", default="hpa-default", help="preset name from pas.yaml")
     la.add_argument("--window", help="window name (predictive scalers in experiment mode)")
     la.add_argument("--startup-delay", type=int)
+
+    sm = sub.add_parser("smoke", help="few-minute end-to-end check of the control loop")
+    sm.add_argument("--lane", default="lane-a")
+    sm.add_argument("--scaler", default="naive", help="hpa or predictive preset")
+    sm.add_argument("--window", default="WD")
+    sm.add_argument("--minutes", type=int, default=10, help="trace minutes to replay")
+    sm.add_argument("--step-seconds", type=int, default=10, help="seconds per trace minute")
+    sm.add_argument("--work-units", type=int, default=2, help="CPU work per request (light)")
 
     c = sub.add_parser("capacity", help="step-load test: per-pod RPS within the SLO")
     c.add_argument("--lane", default="lane-a")
@@ -489,9 +535,22 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+#: commands that act on the cluster; they first check the kubectl context points at it
+CLUSTER_COMMANDS = {"platform", "grafana", "prometheus", "lane", "smoke", "capacity", "lag",
+                    "demo"}
+
+
+def _needs_cluster(cfg: Config, args: argparse.Namespace) -> bool:
+    if args.command == "experiment":
+        return args.action == "run" and not args.dry_run
+    # A local build copies images into the kind nodes; an ACR build needs no kubectl.
+    return args.command in CLUSTER_COMMANDS or (args.command == "build" and cfg.cluster.is_local)
+
+
 HANDLERS = {"data": cmd_data, "train": cmd_train, "backtest": cmd_backtest, "infra": cmd_infra,
             "build": cmd_build, "platform": cmd_platform, "grafana": cmd_forward,
-            "prometheus": cmd_forward, "lane": cmd_lane, "capacity": cmd_capacity,
+            "prometheus": cmd_forward, "lane": cmd_lane, "smoke": cmd_smoke,
+            "capacity": cmd_capacity,
             "lag": cmd_lag, "experiment": cmd_experiment, "analyze": cmd_analyze,
             "demo": cmd_demo}
 
@@ -509,6 +568,9 @@ def main(argv: list[str] | None = None) -> int:
             cmd_serve(None, args)
             return 0
         cfg = load_config(args.config)
+        if _needs_cluster(cfg, args):
+            from pas.infra import ensure_context
+            ensure_context(cfg)
         HANDLERS[args.command](cfg, args)
         return 0
     except (ConfigError, CommandError, FileNotFoundError) as exc:

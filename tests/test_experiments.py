@@ -59,6 +59,18 @@ def test_k6_job_runs_on_loadgen_pool_with_remote_write(project):
     assert {v["name"] for v in spec["volumes"]} == {"scripts", "window"}
 
 
+def test_smoke_checks_cover_the_forecast_only_for_predictive_presets():
+    from pas.experiments.smoke import prometheus_checks
+
+    hpa = prometheus_checks("lane-a", "smoke-1", predictive=False, min_replicas=2)
+    pred = prometheus_checks("lane-a", "smoke-1", predictive=True, min_replicas=2)
+    assert not any("pas_predicted_rps" in q for _, q in hpa)
+    assert any("pas_predicted_rps" in q for _, q in pred)
+    assert any(q.endswith("> 2") and "kube_deployment_spec_replicas" in q for _, q in pred)
+    assert all('lane-a' in q for _, q in pred)
+    assert any('run="smoke-1"' in q for _, q in hpa)
+
+
 def test_parse_summary_takes_the_marker_line():
     log = 'time="..." level=info msg="replaying"\nPAS_SUMMARY {"minutes": 3, "x": 1}\n'
     assert parse_summary(log) == {"minutes": 3, "x": 1}

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pas"
-version = "0.1.0"
-description = "Predictive autoscaling for Kubernetes workloads on AKS: forecasting, scaling and experiment tooling"
+version = "0.2.0"
+description = "Predictive autoscaling for Kubernetes workloads (local kind cluster or AKS): forecasting, scaling and experiment tooling"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
