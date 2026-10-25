@@ -1,0 +1,36 @@
+# Local cluster for the study: `pas infra up` runs
+#   kind create cluster --name pas --config infra/kind/cluster.yaml
+#
+# Each worker stands in for one AKS node pool and carries the same `pas.dev/pool` label. `pas
+# infra up` then taints every pool except `system`, so only the intended pods land on each node.
+# All nodes share the host's CPUs and memory (ADR-013): per-pod CPU limits still hold, but
+# lanes are not isolated from each other.
+#
+# The node image is pinned by digest for reproducibility. It belongs to kind v0.33.0 (use that
+# release or newer) and runs Kubernetes 1.36, inside KEDA 2.21's tested range (1.34-1.36).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: pas
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+  # Prometheus, Grafana, KEDA, metrics-server and the forecasters.
+  - role: worker
+    image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    labels:
+      pas.dev/pool: system
+  # demo-api of lane-a.
+  - role: worker
+    image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    labels:
+      pas.dev/pool: app
+  # demo-api of lane-b (demo, or a second lane).
+  - role: worker
+    image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    labels:
+      pas.dev/pool: appb
+  # k6 load generator Jobs.
+  - role: worker
+    image: kindest/node:v1.36.4@sha256:099e049362a1526b2db71494e1947aae99bd16290d7c895f2b7ea312e3cbfaed
+    labels:
+      pas.dev/pool: loadgen

@@ -15,6 +15,8 @@ def test_repository_config_loads():
     assert {"hpa-default", "hpa-tuned", "naive", "arima", "oracle"} <= set(cfg.scalers)
     # Predictive presets share the tuned HPA's behaviour (YAML anchors) for a fair ablation.
     assert cfg.scaler("arima")["behavior"] == cfg.scaler("hpa-tuned")["behavior"]
+    # The study runs locally unless pas.yaml asks for AKS (ADR-013).
+    assert cfg.cluster.is_local and cfg.cluster.kind_name == "pas"
 
 
 def test_required_replicas_respects_minimum():
@@ -28,6 +30,7 @@ def test_required_replicas_respects_minimum():
     (("forecast", "lead_minutes"), [3, 20], "lead_minutes"),
     (("forecast", "headroom"), 1.5, "headroom"),
     (("capacity", "min_replicas"), 50, "min_replicas"),
+    (("cluster", "provider"), "gke", "provider"),
 ])
 def test_invalid_values_are_rejected(tmp_path, path, value, message):
     raw = yaml.safe_load((REPO / "pas.yaml").read_text(encoding="utf-8"))

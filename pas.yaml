@@ -97,7 +97,9 @@ scalers:
   # Ablation: forecast only, no CPU safety net.
   arima-only: {mode: predictive, model: arima, hybrid: false, behavior: *tuned_behavior}
 
-# Lanes are isolated namespaces, each pinned to its own node pool, so two runs can go in parallel.
+# Lanes are namespaces, each pinned to its own node pool. On AKS the pools are separate VMs, so
+# two runs can go in parallel. On a local kind cluster every node shares the host's CPUs: run
+# measured experiments on one lane at a time; two lanes at once are fine for the demo (ADR-013).
 lanes:
   lane-a: {node_pool: app}
   lane-b: {node_pool: appb}
@@ -107,8 +109,13 @@ backtest:
   horizons: [1, 3, 5, 10]
 
 cluster:
+  # local: a kind cluster in Docker on this machine (default, no cloud account needed; ADR-013).
+  # aks:   Azure Kubernetes Service created from infra/terraform (optional).
+  provider: local
+  kind_name: pas                       # kind cluster name; kubectl context is kind-<name>
+  kind_config: infra/kind/cluster.yaml # nodes standing in for the system/app/appb/loadgen pools
   prometheus_service: monitoring/kube-prometheus-stack-prometheus
   grafana_service: monitoring/kube-prometheus-stack-grafana
   k6_image: grafana/k6:2.2.0
-  # Filled automatically from `terraform output` when empty.
+  # aks only. Filled automatically from `terraform output` when empty.
   acr_login_server: ""

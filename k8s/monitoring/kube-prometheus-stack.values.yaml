@@ -1,29 +1,29 @@
 # kube-prometheus-stack values. Installed by `pas platform install` as release
 # "kube-prometheus-stack" in namespace "monitoring". Everything runs on the system pool so the
-# app and load-generator pools only carry what is being measured.
+# app and load-generator pools only carry what is being measured. The same file serves the local
+# kind cluster and AKS: the system pool is labelled pas.dev/pool=system on both.
 
 alertmanager:
   enabled: false
 
-# AKS manages the control plane; these targets are not scrapeable and would only add errors.
+# Control-plane targets are not scrapeable on AKS (managed) and not needed on kind.
 kubeEtcd: {enabled: false}
 kubeControllerManager: {enabled: false}
 kubeScheduler: {enabled: false}
 kubeProxy: {enabled: false}
 
 prometheusOperator:
-  nodeSelector: {kubernetes.azure.com/mode: system}
+  nodeSelector: {pas.dev/pool: system}
 
 kube-state-metrics:
-  nodeSelector: {kubernetes.azure.com/mode: system}
+  nodeSelector: {pas.dev/pool: system}
 
-prometheus-node-exporter:
-  # Run on every node, including the tainted app and loadgen pools.
-  tolerations:
-    - operator: Exists
+# No study metric or dashboard panel uses node-exporter, and on Docker Desktop its host root
+# mount fails inside kind nodes.
+nodeExporter: {enabled: false}
 
 grafana:
-  nodeSelector: {kubernetes.azure.com/mode: system}
+  nodeSelector: {pas.dev/pool: system}
   # Dashboards in ConfigMaps labelled grafana_dashboard=1 are loaded automatically.
   sidecar:
     dashboards:
@@ -34,7 +34,7 @@ grafana:
 
 prometheus:
   prometheusSpec:
-    nodeSelector: {kubernetes.azure.com/mode: system}
+    nodeSelector: {pas.dev/pool: system}
     scrapeInterval: 15s
     evaluationInterval: 15s
     retention: 15d
@@ -46,12 +46,12 @@ prometheus:
     resources:
       requests: {cpu: 200m, memory: 1Gi}
       limits: {memory: 2500Mi}
-    # A persistent volume keeps data across `az aks stop/start`. Each run is also exported to
-    # parquet at its end, so this is a convenience, not the system of record.
+    # A persistent volume (the cluster's default storage class) keeps data across
+    # `pas infra stop/start`. Each run is also exported to parquet at its end, so this is a
+    # convenience, not the system of record.
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: managed-csi
           accessModes: ["ReadWriteOnce"]
           resources:
             requests:

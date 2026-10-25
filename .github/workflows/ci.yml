@@ -60,3 +60,37 @@ jobs:
           terraform fmt -check
           terraform init -backend=false -input=false
           terraform validate
+
+  # The whole local path on a real kind cluster: create it, install the platform, build and load
+  # the images, then run `pas smoke` (k6 -> demo-api -> Prometheus -> forecaster -> KEDA -> HPA).
+  kind:
+    runs-on: ubuntu-latest
+    needs: [python, go, manifests]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: azure/setup-helm@v4
+      - name: Install kind and pas
+        run: |
+          curl -fsSLo kind https://kind.sigs.k8s.io/dl/v0.33.0/kind-linux-amd64
+          sudo install -m 0755 kind /usr/local/bin/kind && rm kind
+          pip install -e .
+      - run: pas infra up
+      - run: pas platform install
+      # The smoke test uses the seasonal-naive model, so PyTorch is not needed in the image.
+      - run: pas build --no-with-lstm
+      - run: pas doctor || true
+      - run: pas smoke
+      - name: Diagnostics
+        if: failure()
+        run: |
+          kubectl get nodes -o wide
+          kubectl get pods -A -o wide
+          kubectl -n lane-a describe scaledobject,hpa || true
+          kubectl -n lane-a logs deploy/demo-api-forecaster --tail=100 || true
+          kubectl -n lane-a logs -l app.kubernetes.io/name=k6 --tail=100 || true
+          kubectl get events -A --sort-by=.lastTimestamp | tail -60

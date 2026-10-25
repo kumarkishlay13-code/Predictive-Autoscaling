@@ -88,5 +88,5 @@ Observations:
    will over-provision. The LSTM-P90 is slightly under-calibrated but has the lowest pinball loss
    from 3 minutes on: the best candidate for uncertainty-aware scaling (E1).
 
-Next: live runs on AKS (capacity, lag, then the experiment matrix) to see whether forecast
-accuracy translates into fewer SLO-violation minutes (RQ2).
+Next: live runs on the local kind cluster (capacity, lag, then the experiment matrix; ADR-013)
+to see whether forecast accuracy translates into fewer SLO-violation minutes (RQ2).

@@ -9,8 +9,28 @@ def test_help_lists_every_command(capsys):
     with pytest.raises(SystemExit):
         build_parser().parse_args(["--help"])
     out = capsys.readouterr().out
-    for command in ("doctor", "data", "train", "backtest", "experiment", "analyze", "demo"):
+    for command in ("doctor", "data", "train", "backtest", "experiment", "analyze", "demo",
+                    "smoke"):
         assert command in out
+
+
+def test_cluster_commands_check_the_kube_context_first(project, monkeypatch, capsys):
+    import pas.infra
+
+    seen = []
+
+    def fake_output(cmd, **_):
+        seen.append(cmd)
+        return "work-prod"
+
+    monkeypatch.setattr(pas.infra, "output", fake_output)
+    cfg = str(project.root / "pas.yaml")
+    assert main(["--config", cfg, "lane", "status", "lane-a"]) == 1
+    assert "expected 'kind-pas'" in capsys.readouterr().err
+    # Planning needs no cluster, so no context check.
+    seen.clear()
+    assert main(["--config", cfg, "experiment", "run", "--dry-run"]) == 1  # no plan.csv yet
+    assert not seen
 
 
 def test_offline_pipeline(project, fake_trace, capsys):

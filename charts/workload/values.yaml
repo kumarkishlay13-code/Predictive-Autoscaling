@@ -47,8 +47,9 @@ forecaster:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {memory: 1Gi}
+  # The system pool (a kind worker locally, the default node pool on AKS).
   nodeSelector:
-    kubernetes.azure.com/mode: system
+    pas.dev/pool: system
 
 serviceMonitor:
   enabled: true

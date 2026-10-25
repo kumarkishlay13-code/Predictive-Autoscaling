@@ -22,6 +22,8 @@ from typing import Any
 import yaml
 
 INSTALL_HINTS = {
+    "docker": "winget install Docker.DockerDesktop (Linux: Docker Engine)",
+    "kind": "winget install Kubernetes.kind, brew install kind, or the release binary",
     "kubectl": "winget install Kubernetes.kubectl",
     "helm": "winget install Helm.Helm",
     "az": "winget install Microsoft.AzureCLI",

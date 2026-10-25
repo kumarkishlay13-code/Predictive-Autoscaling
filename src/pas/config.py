@@ -83,12 +83,23 @@ class BacktestConfig:
     horizons: tuple[int, ...]
 
 
+PROVIDERS = ("local", "aks")
+
+
 @dataclass(frozen=True)
 class ClusterConfig:
     prometheus_service: str
     grafana_service: str
     k6_image: str
+    #: local = kind cluster in Docker on this machine (ADR-013); aks = Azure (infra/terraform)
+    provider: str = "local"
+    kind_name: str = "pas"
+    kind_config: str = "infra/kind/cluster.yaml"
     acr_login_server: str = ""
+
+    @property
+    def is_local(self) -> bool:
+        return self.provider == "local"
 
 
 @dataclass(frozen=True)
@@ -240,8 +251,14 @@ def load_config(path: str | Path = DEFAULT_CONFIG) -> Config:
                                  "monitoring/kube-prometheus-stack-prometheus"),
         grafana_service=k.get("grafana_service", "monitoring/kube-prometheus-stack-grafana"),
         k6_image=k.get("k6_image", "grafana/k6:2.2.0"),
+        provider=str(k.get("provider", "local")),
+        kind_name=str(k.get("kind_name", "pas")),
+        kind_config=str(k.get("kind_config", "infra/kind/cluster.yaml")),
         acr_login_server=k.get("acr_login_server", "") or "",
     )
+    if cluster.provider not in PROVIDERS:
+        raise ConfigError(f"cluster.provider must be one of {', '.join(PROVIDERS)}, "
+                          f"got {cluster.provider!r}")
 
     scalers = dict(raw.get("scalers", {}))
     for name, preset in scalers.items():

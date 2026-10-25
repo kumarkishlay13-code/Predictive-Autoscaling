@@ -11,13 +11,14 @@ never rewrite an old one, supersede it.
 | 003 | Hybrid scaler: KEDA with a CPU trigger and a forecast trigger, HPA takes the max | accepted |
 | 004 | Configurable start-up delay in the demo app | accepted |
 | 005 | No ingress controller; offered load counted on arrival in the app | accepted |
-| 006 | No local Kubernetes; images built in Azure (ACR Tasks) | accepted |
+| 006 | No local Kubernetes; images built in Azure (ACR Tasks) | superseded by 013 |
 | 007 | Prophet used offline only | accepted |
 | 008 | Go for the workload, Python for everything else | accepted |
 | 009 | All configuration in one file, `pas.yaml` | accepted |
 | 010 | Load signal chosen by exploratory analysis, not the trace total | accepted |
 | 011 | Flash-crowd spikes capped at 95 % of cluster capacity | accepted |
 | 012 | ARIMA(1,1,1) with log-normal bias correction, chosen on validation days | accepted |
+| 013 | Run the study on a local kind cluster; AKS becomes optional | accepted |
 
 ---
 
@@ -83,6 +84,8 @@ so kube-proxy spreads load over newly added pods.
 the primary SLO measure. Server-side latency is kept as a cross-check.
 
 ## ADR-006 No local Kubernetes
+
+*Superseded by ADR-013.*
 
 **Context.** The development laptop has 3.9 GB RAM. Docker Desktop with a kind cluster running
 Prometheus, Grafana and KEDA does not fit.
@@ -153,3 +156,42 @@ reporting:
 **Consequences.** At long horizons the corrected forecast leans high, the safe side for
 autoscaling. The P90 interval is conservative (3–4 % of observations above it rather than 10 %),
 so `arima-p90` will over-provision somewhat. Report this calibration with the results.
+
+## ADR-013 Run the study on a local kind cluster
+
+**Context.** There is no Azure subscription available for the study, and the experiments should
+not depend on a cloud account. ADR-006 assumed the 3.9 GB development laptop was the only
+machine; the experiments will now run on a separate workstation with enough CPU and memory.
+
+**Decision.** The default platform is a [kind](https://kind.sigs.k8s.io) cluster in Docker
+(`cluster.provider: local`):
+
+- Four worker nodes stand in for the AKS pools, with the same `pas.dev/pool` labels and taints:
+  system, app, appb and loadgen (`infra/kind/cluster.yaml`). The node image is pinned by digest
+  to Kubernetes 1.36.
+- AKS provides KEDA and metrics-server; locally, `pas platform install` installs them with Helm,
+  with pinned chart versions.
+- Images are built with `docker build` and copied into the nodes with `kind load`. No registry
+  is needed.
+- AKS stays available unchanged as `cluster.provider: aks`. The system pool now carries the
+  same `pas.dev/pool=system` label on both providers, so the chart and monitoring values are
+  shared.
+- `pas smoke` and a CI job on a real kind cluster check the whole control loop end to end.
+
+**Consequences.**
+
+1. **Lanes are not isolated.** Every kind node reports and shares the host's CPUs. Pod CPU
+   limits (CFS quota) still fix per-pod capacity, which is what the scalers act on. But two
+   lanes at once compete for the host, so measured runs use one lane at a time. Parallel lanes
+   are only for the demo.
+2. **Pod start-up is faster than on AKS.** Images are already on the nodes and no VM is ever
+   provisioned, so the provisioning lag is almost entirely the configured warm-up (ADR-004).
+   This makes the start-up-delay sensitivity study the main lever for lag. The report must say
+   that node scale-out (Cluster Autoscaler) is out of scope.
+3. **Capacity and lag belong to the workstation.** `pas capacity` and `pas lag` must run on the
+   machine that runs the experiments, and the results must be reported with its CPU model.
+4. **Generality.** HPA, KEDA, metrics-server, kube-state-metrics and Prometheus are the same
+   upstream components AKS uses, so the comparison of scaling policies carries over. Claims
+   specific to AKS (managed control-plane latency, VM start-up) cannot be made from these runs.
+5. **The study costs nothing to run**, so repetitions are limited only by time. The full matrix
+   is about 136 hours.

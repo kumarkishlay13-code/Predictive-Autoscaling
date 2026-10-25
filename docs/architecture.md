@@ -3,12 +3,12 @@
 ## Components
 
 ```
-                ┌──────────────────────────────── AKS ─────────────────────────────────────┐
+                ┌──────────── Kubernetes: local kind cluster (default) or AKS ─────────────┐
                 │ loadgen pool             app pool (fixed size)          system pool       │
  window JSON ───┼─► k6 Job ──── HTTP ────► demo-api pods ◄─── scale ───┐  Prometheus        │
  (trace replay) │   │  (open model,         (Go, 250m CPU,             │  Grafana           │
                 │   │   new conn/request)    warm-up delay)            │  kube-state-metrics│
-                │   │ remote write              │ /metrics            │  KEDA (add-on)     │
+                │   │ remote write              │ /metrics            │  KEDA, metrics-srv │
                 │   ▼                           ▼                     │                    │
                 │  Prometheus ◄──────── scrape every 15 s ────────────┤                    │
                 │   │  sum(rate(demo_requests_received_total[1m]))    │                    │
@@ -18,7 +18,7 @@
                 │  KEDA ScaledObject: triggers = CPU, max(pas_predicted_rps) ─► HPA ──┘    │
                 └──────────────────────────────────────────────────────────────────────────┘
 
- laptop: pas CLI ── data, training, backtests, Helm/Terraform/az, experiment runner, analysis
+ workstation: pas CLI ── data, models, backtests, kind/docker/Helm, experiment runner, analysis
 ```
 
 | Component | Code | Runs in |
@@ -26,11 +26,28 @@
 | Workload | `app/` (Go) | app pool, one Deployment per lane |
 | Load generator | `loadgen/replay.js`, `loadgen/capacity.js` (k6) | loadgen pool, one Job per run |
 | Forecaster service | `src/pas/forecaster/` | system pool, predictive lanes only |
-| Models | `src/pas/models/` | laptop (training), forecaster (inference) |
+| Models | `src/pas/models/` | workstation (training), forecaster (inference) |
 | Lane chart | `charts/workload/` | Helm release `workload` in each lane namespace |
 | Monitoring | `k8s/monitoring/` | kube-prometheus-stack on the system pool |
-| Infrastructure | `infra/terraform/` | AKS, ACR, node pools, budget |
-| Orchestration and analysis | `src/pas/cli.py`, `src/pas/experiments/`, `src/pas/analysis/` | laptop |
+| Local cluster | `infra/kind/cluster.yaml`, `src/pas/infra.py` | kind nodes in Docker (default) |
+| Infrastructure (optional) | `infra/terraform/` | AKS, ACR, node pools, budget |
+| Orchestration and analysis | `src/pas/cli.py`, `src/pas/experiments/`, `src/pas/analysis/` | workstation |
+
+## Platforms
+
+`cluster.provider` in `pas.yaml` selects where the cluster runs (ADR-013):
+
+| | local (default) | aks |
+|---|---|---|
+| Cluster | kind in Docker, from `infra/kind/cluster.yaml` | AKS, from `infra/terraform/` |
+| Node pools | kind workers labelled and tainted `pas.dev/pool=system/app/appb/loadgen` | separate VM pools with the same labels and taints |
+| Images | `docker build`, then `kind load` into the nodes that run them | ACR Tasks (`az acr build`), pulled with AcrPull |
+| KEDA, metrics-server | Helm charts (pinned versions in `src/pas/infra.py`) | AKS add-on, built in |
+| Isolation of lanes | none: nodes share the host CPUs, so one lane at a time | per pool |
+| Stop/start | `docker stop/start` of the node containers | `az aks stop/start` |
+
+Commands that touch the cluster refuse to run unless the kubectl context is the study's
+(`kind-pas`, or the AKS cluster name), so a work cluster in the same kubeconfig is never touched.
 
 ## Lanes and scaler modes
 
@@ -118,6 +135,7 @@ two-sided Mann–Whitney U test of SLO-violation minutes against the baseline (d
 - Containers run as non-root with a read-only root filesystem, no capabilities, and the
   RuntimeDefault seccomp profile; no service-account tokens are mounted.
 - The demo-api image is `scratch` plus one static binary.
-- No secrets in the repository: Terraform state and `terraform.tfvars` are git-ignored; ACR is
-  reached through the cluster's managed identity (AcrPull), with the admin user disabled.
+- No secrets in the repository. Locally, images never leave the machine (no registry). On AKS,
+  Terraform state and `terraform.tfvars` are git-ignored, and ACR is reached through the
+  cluster's managed identity (AcrPull) with the admin user disabled.
 - Model files are Python pickles: only load artifacts this project produced.

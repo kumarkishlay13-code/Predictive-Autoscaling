@@ -41,7 +41,7 @@ go test -run xxx -bench BurnUnit .
 ```
 
 On the development laptop one unit took about 0.77 ms, so 20 units on a 250m pod give roughly
-20 RPS per pod. The real figure on AKS comes from `pas capacity`.
+20 RPS per pod. The real figure comes from `pas capacity` on the experiment machine.
 
 ## Develop
 
@@ -51,4 +51,5 @@ go run .                           # http://localhost:8080/work
 STARTUP_DELAY_SECONDS=5 go run .   # watch /readyz flip after 5 s
 ```
 
-The image is built in Azure by `pas build` (multi-stage, `scratch` final image, non-root).
+The image is built by `pas build` (multi-stage, `scratch` final image, non-root): locally with
+Docker and loaded into the kind nodes, or in Azure with ACR Tasks when `cluster.provider: aks`.

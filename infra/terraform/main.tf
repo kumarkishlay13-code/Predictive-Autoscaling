@@ -33,9 +33,10 @@ resource "azurerm_kubernetes_cluster" "aks" {
   sku_tier            = "Free"
 
   default_node_pool {
-    name       = "system"
-    vm_size    = var.system_vm_size
-    node_count = 1
+    name        = "system"
+    vm_size     = var.system_vm_size
+    node_count  = 1
+    node_labels = { "pas.dev/pool" = "system" } # same label as the local kind cluster
 
     upgrade_settings {
       max_surge = "10%"
